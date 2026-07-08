@@ -1506,6 +1506,218 @@ input:focus,select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(10,1
 </main>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
+/* ============================================================
+   저장압축 V650 (2026-07-08)
+   문제: 데이터가 4.5MB를 넘어 localStorage 5MB 한도 초과 →
+        "브라우저 저장공간 문제로 저장하지 못했습니다" 발생.
+   해결: 저장 시 LZ 압축(UTF16 안전, lz-string 1.4.4 이식)해 같은 키에
+        'LZ16|' 표식과 함께 저장. 체감 5~10배 용량 확보.
+   안전장치:
+   - 압축 직후 즉시 해제해 원문과 대조(라운드트립 검증). 불일치/오류면
+     압축을 포기하고 기존 평문 그대로 저장 → 최악의 경우에도 종전과 동일.
+   - 읽을 때 'LZ16|' 표식이 없으면 기존 평문 데이터로 그대로 해석(하위호환).
+   - 백업파일(JSON)은 압축과 무관하게 평문 그대로 저장/복원됨.
+   이 블록은 본체 스크립트보다 먼저 실행되어야 함(loadStoredState가 사용).
+   ============================================================ */
+(function(){
+ 'use strict';
+ var f=String.fromCharCode;
+ /* lz-string 1.4.4 (MIT, pieroxy) — compressToUTF16/decompressFromUTF16 필수부 이식 */
+ function _compress(uncompressed, bitsPerChar, getCharFromInt){
+  if(uncompressed==null) return '';
+  var i, value,
+   context_dictionary={},
+   context_dictionaryToCreate={},
+   context_c='', context_wc='', context_w='',
+   context_enlargeIn=2, context_dictSize=3, context_numBits=2,
+   context_data=[], context_data_val=0, context_data_position=0, ii;
+  function emitW(){
+   if(Object.prototype.hasOwnProperty.call(context_dictionaryToCreate,context_w)){
+    if(context_w.charCodeAt(0)<256){
+     for(i=0;i<context_numBits;i++){
+      context_data_val=(context_data_val<<1);
+      if(context_data_position==bitsPerChar-1){context_data_position=0;context_data.push(getCharFromInt(context_data_val));context_data_val=0;}else{context_data_position++;}
+     }
+     value=context_w.charCodeAt(0);
+     for(i=0;i<8;i++){
+      context_data_val=(context_data_val<<1)|(value&1);
+      if(context_data_position==bitsPerChar-1){context_data_position=0;context_data.push(getCharFromInt(context_data_val));context_data_val=0;}else{context_data_position++;}
+      value=value>>1;
+     }
+    }else{
+     value=1;
+     for(i=0;i<context_numBits;i++){
+      context_data_val=(context_data_val<<1)|value;
+      if(context_data_position==bitsPerChar-1){context_data_position=0;context_data.push(getCharFromInt(context_data_val));context_data_val=0;}else{context_data_position++;}
+      value=0;
+     }
+     value=context_w.charCodeAt(0);
+     for(i=0;i<16;i++){
+      context_data_val=(context_data_val<<1)|(value&1);
+      if(context_data_position==bitsPerChar-1){context_data_position=0;context_data.push(getCharFromInt(context_data_val));context_data_val=0;}else{context_data_position++;}
+      value=value>>1;
+     }
+    }
+    context_enlargeIn--;
+    if(context_enlargeIn==0){context_enlargeIn=Math.pow(2,context_numBits);context_numBits++;}
+    delete context_dictionaryToCreate[context_w];
+   }else{
+    value=context_dictionary[context_w];
+    for(i=0;i<context_numBits;i++){
+     context_data_val=(context_data_val<<1)|(value&1);
+     if(context_data_position==bitsPerChar-1){context_data_position=0;context_data.push(getCharFromInt(context_data_val));context_data_val=0;}else{context_data_position++;}
+     value=value>>1;
+    }
+   }
+   context_enlargeIn--;
+   if(context_enlargeIn==0){context_enlargeIn=Math.pow(2,context_numBits);context_numBits++;}
+  }
+  for(ii=0; ii<uncompressed.length; ii+=1){
+   context_c=uncompressed.charAt(ii);
+   if(!Object.prototype.hasOwnProperty.call(context_dictionary,context_c)){
+    context_dictionary[context_c]=context_dictSize++;
+    context_dictionaryToCreate[context_c]=true;
+   }
+   context_wc=context_w+context_c;
+   if(Object.prototype.hasOwnProperty.call(context_dictionary,context_wc)){
+    context_w=context_wc;
+   }else{
+    emitW();
+    context_dictionary[context_wc]=context_dictSize++;
+    context_w=String(context_c);
+   }
+  }
+  if(context_w!==''){ emitW(); }
+  value=2;
+  for(i=0;i<context_numBits;i++){
+   context_data_val=(context_data_val<<1)|(value&1);
+   if(context_data_position==bitsPerChar-1){context_data_position=0;context_data.push(getCharFromInt(context_data_val));context_data_val=0;}else{context_data_position++;}
+   value=value>>1;
+  }
+  while(true){
+   context_data_val=(context_data_val<<1);
+   if(context_data_position==bitsPerChar-1){context_data.push(getCharFromInt(context_data_val));break;}
+   else context_data_position++;
+  }
+  return context_data.join('');
+ }
+ function _decompress(length, resetValue, getNextValue){
+  var dictionary=[], enlargeIn=4, dictSize=4, numBits=3, entry='', result=[], i, w, bits, resb, maxpower, power, c,
+   data={val:getNextValue(0), position:resetValue, index:1};
+  for(i=0;i<3;i+=1) dictionary[i]=i;
+  bits=0; maxpower=Math.pow(2,2); power=1;
+  while(power!=maxpower){
+   resb=data.val & data.position;
+   data.position>>=1;
+   if(data.position==0){ data.position=resetValue; data.val=getNextValue(data.index++); }
+   bits|=(resb>0?1:0)*power; power<<=1;
+  }
+  switch(bits){
+   case 0:
+    bits=0; maxpower=Math.pow(2,8); power=1;
+    while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){data.position=resetValue; data.val=getNextValue(data.index++);} bits|=(resb>0?1:0)*power; power<<=1; }
+    c=f(bits); break;
+   case 1:
+    bits=0; maxpower=Math.pow(2,16); power=1;
+    while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){data.position=resetValue; data.val=getNextValue(data.index++);} bits|=(resb>0?1:0)*power; power<<=1; }
+    c=f(bits); break;
+   case 2: return '';
+  }
+  dictionary[3]=c; w=c; result.push(c);
+  while(true){
+   if(data.index>length) return '';
+   bits=0; maxpower=Math.pow(2,numBits); power=1;
+   while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){data.position=resetValue; data.val=getNextValue(data.index++);} bits|=(resb>0?1:0)*power; power<<=1; }
+   switch(c=bits){
+    case 0:
+     bits=0; maxpower=Math.pow(2,8); power=1;
+     while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){data.position=resetValue; data.val=getNextValue(data.index++);} bits|=(resb>0?1:0)*power; power<<=1; }
+     dictionary[dictSize++]=f(bits); c=dictSize-1; enlargeIn--; break;
+    case 1:
+     bits=0; maxpower=Math.pow(2,16); power=1;
+     while(power!=maxpower){ resb=data.val&data.position; data.position>>=1; if(data.position==0){data.position=resetValue; data.val=getNextValue(data.index++);} bits|=(resb>0?1:0)*power; power<<=1; }
+     dictionary[dictSize++]=f(bits); c=dictSize-1; enlargeIn--; break;
+    case 2: return result.join('');
+   }
+   if(enlargeIn==0){ enlargeIn=Math.pow(2,numBits); numBits++; }
+   if(dictionary[c]!==undefined){ entry=dictionary[c]; }
+   else{ if(c===dictSize){ entry=w+w.charAt(0); } else { return null; } }
+   result.push(entry);
+   dictionary[dictSize++]=w+entry.charAt(0);
+   enlargeIn--;
+   w=entry;
+   if(enlargeIn==0){ enlargeIn=Math.pow(2,numBits); numBits++; }
+  }
+ }
+ var LZ={
+  compressToUTF16:function(input){ if(input==null) return ''; return _compress(input,15,function(a){return f(a+32);})+' '; },
+  decompressFromUTF16:function(compressed){ if(compressed==null) return ''; if(compressed=='') return null; return _decompress(compressed.length,16384,function(index){return compressed.charCodeAt(index)-32;}); }
+ };
+ window.__LZ650=LZ;
+ var MARK='LZ16|';
+ /* 저장 문자열 포장: 압축 + 라운드트립 검증. 실패 시 평문 반환(안전 우선) */
+ window.__packStateV650=function(jsonStr){
+  try{
+   var packed=MARK+LZ.compressToUTF16(jsonStr);
+   var back=window.__unpackStateV650(packed);
+   if(back===jsonStr) return packed;
+   console.warn('저장압축 V650: 라운드트립 검증 불일치 — 평문 저장으로 대체');
+  }catch(e){ console.warn('저장압축 V650: 압축 실패 — 평문 저장으로 대체', e); }
+  return jsonStr;
+ };
+ /* 읽기: 표식 있으면 해제, 없으면(기존 데이터) 그대로 */
+ window.__unpackStateV650=function(raw){
+  if(typeof raw==='string' && raw.slice(0,MARK.length)===MARK){
+   var out=LZ.decompressFromUTF16(raw.slice(MARK.length));
+   if(typeof out==='string' && out.length) return out;
+   console.warn('저장압축 V650: 해제 실패 — 원문 그대로 반환');
+  }
+  return raw;
+ };
+ /* 백그라운드(워커) 압축 — 용량 초과 시에만 사용. 압축+해제 대조 검증까지 워커 안에서 수행.
+    워커를 못 만드는 환경이면 동기 압축(__packStateV650)으로 자동 대체. */
+ var lzWorker=null;
+ function buildWorker(){
+  if(lzWorker!==null) return lzWorker;
+  try{
+   var src='var f=String.fromCharCode;\n'
+    +_compress.toString()+'\n'
+    +_decompress.toString()+'\n'
+    +'self.onmessage=function(e){\n'
+    +' var json=e.data, out=null;\n'
+    +' try{\n'
+    +'  var packed=_compress(json,15,function(a){return f(a+32);})+" ";\n'
+    +'  var back=_decompress(packed.length,16384,function(i){return packed.charCodeAt(i)-32;});\n'
+    +'  if(back===json) out="'+MARK+'"+packed;\n'
+    +' }catch(err){}\n'
+    +' self.postMessage(out);\n'
+    +'};';
+   lzWorker=new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})));
+  }catch(e){ console.warn('저장압축 V650: 워커 생성 불가 — 동기 압축으로 대체', e); lzWorker=false; }
+  return lzWorker;
+ }
+ var busy=false, queued=null, queuedCb=null;
+ window.__packStateV650Async=function(jsonStr, done){
+  var w=buildWorker();
+  if(!w){ done(window.__packStateV650(jsonStr)); return; }
+  if(busy){ queued=jsonStr; queuedCb=done; return; } /* 진행 중이면 최신 요청만 대기시킴 */
+  busy=true;
+  w.onmessage=function(ev){
+   busy=false;
+   var packed=(typeof ev.data==='string' && ev.data)?ev.data:jsonStr; /* 워커 검증 실패 시 평문 */
+   try{ done(packed); }catch(e){ console.warn('저장압축 V650 콜백 오류', e); }
+   if(queued!==null){ var j=queued, cb=queuedCb; queued=null; queuedCb=null; window.__packStateV650Async(j, cb); }
+  };
+  w.onerror=function(err){
+   busy=false; lzWorker=false;
+   console.warn('저장압축 V650: 워커 오류 — 동기 압축으로 대체', err);
+   try{ done(window.__packStateV650(jsonStr)); }catch(e){}
+  };
+  w.postMessage(jsonStr);
+ };
+})();
+</script>
+<script>
 const IMPORT_PURCHASE_CAT='[수입]상품매입';
 const COURIER_PAYABLE_EXPENSE_CAT='[택배비] 전월(택배미지급금 차감)';
 const fmt=n=>(Math.round(n)||0).toLocaleString('ko-KR');
@@ -2540,6 +2752,7 @@ function loadStoredState(){
   let migratedFromOld=false;
   if(!raw && PREV_STORAGE_KEY){ raw=localStorage.getItem(PREV_STORAGE_KEY); migratedFromOld=!!raw; }
   if(!raw) return;
+  if(typeof window.__unpackStateV650==='function') raw=window.__unpackStateV650(raw); /* 저장압축 V650: 압축 데이터면 해제, 평문이면 그대로 */
   const saved=JSON.parse(raw);
   Object.keys(saved).forEach(k=>{ state[k]=saved[k]; });
   if(!Array.isArray(state.misc)) state.misc=[];
@@ -2594,7 +2807,13 @@ function loadStoredState(){
 function saveData(){
  /* (정리 2026-07-07 3단계) 과거 saveData 래퍼 겹들의 사전 정리 작업 (겹 순서 보존: 등록 역순) */
  for(let __p=(window.__savePre||[]).length-1;__p>=0;__p--){ try{ window.__savePre[__p](); }catch(e){ console.warn('저장 사전단계 실패', e); } }
- try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+ try{
+  const __json=JSON.stringify(state);
+  try{ localStorage.setItem(STORAGE_KEY, __json); } /* 평소: 기존과 동일한 평문 저장(빠름) */
+  catch(__qe){ /* 용량 초과 시에만 압축 저장 (저장압축 V650) */
+   localStorage.setItem(STORAGE_KEY, (typeof window.__packStateV650==='function')?window.__packStateV650(__json):__json);
+  }
+ }
  catch(e){ console.warn('저장 실패', e); alert('브라우저 저장공간 문제로 저장하지 못했습니다.'); }
 }
 /* (정리 2026-07-07: 뒤 선언에 가려져 실행 불가였던 resetAllSavedData 구버전 삭제) */
@@ -12998,23 +13217,50 @@ function renderProfit(){
  let lastSaveError='';
  let lastSaveAt='';
  const nativeSetItem=Storage.prototype.setItem;
+ function markSaved(){ lastSaveAt=new Date().toLocaleString('ko-KR'); lastSaveError=''; }
+ function markFailed(e){
+  lastSaveError=(e&&e.message)||String(e);
+  console.warn('저장 실패', e);
+  try{ if(typeof uxToast==='function') uxToast('브라우저 저장공간 문제로 저장하지 못했습니다. 백업파일 저장을 먼저 권장합니다.'); }catch(_e){}
+ }
  function rawSaveNow(){
+  /* 저장압축 V650: 평문 저장 시도(기존과 동일·빠름) → 용량 초과면
+     백그라운드 워커로 압축해 저장(화면 멈춤 없음) */
   try{
    if(typeof STORAGE_KEY==='undefined' || typeof state==='undefined') return false;
-   nativeSetItem.call(localStorage, STORAGE_KEY, JSON.stringify(state));
-   lastSaveAt=new Date().toLocaleString('ko-KR');
-   lastSaveError='';
-   return true;
-  }catch(e){
-   lastSaveError=(e&&e.message)||String(e);
-   console.warn('저장 실패', e);
-   try{ if(typeof uxToast==='function') uxToast('브라우저 저장공간 문제로 저장하지 못했습니다. 백업파일 저장을 먼저 권장합니다.'); }catch(_e){}
-   return false;
-  }
+   const json=JSON.stringify(state);
+   try{
+    nativeSetItem.call(localStorage, STORAGE_KEY, json);
+    markSaved();
+    return true;
+   }catch(quotaErr){
+    if(typeof window.__packStateV650Async==='function'){
+     window.__packStateV650Async(json, function(packed){
+      try{
+       nativeSetItem.call(localStorage, STORAGE_KEY, packed);
+       markSaved();
+       if(!window.__v650ToastShown){ window.__v650ToastShown=true; try{ uxToast('데이터가 5MB를 넘어 압축 저장 방식으로 자동 전환했습니다.'); }catch(_e){} }
+      }catch(e2){ markFailed(e2); }
+     });
+     return true; /* 압축 저장 진행 중 */
+    }
+    throw quotaErr;
+   }
+  }catch(e){ markFailed(e); return false; }
  }
  window.flushProgramSave=function(){
+  /* 닫기 직전/백업 직전 즉시 저장: 워커를 기다릴 수 없어 동기 압축 사용 */
   if(pendingSaveTimer){ clearTimeout(pendingSaveTimer); pendingSaveTimer=null; }
-  return rawSaveNow();
+  try{
+   if(typeof STORAGE_KEY==='undefined' || typeof state==='undefined') return false;
+   const json=JSON.stringify(state);
+   try{ nativeSetItem.call(localStorage, STORAGE_KEY, json); markSaved(); return true; }
+   catch(quotaErr){
+    const packed=(typeof window.__packStateV650==='function')?window.__packStateV650(json):json;
+    nativeSetItem.call(localStorage, STORAGE_KEY, packed);
+    markSaved(); return true;
+   }
+  }catch(e){ markFailed(e); return false; }
  };
  window.saveData=function(){
   if(pendingSaveTimer) clearTimeout(pendingSaveTimer);
