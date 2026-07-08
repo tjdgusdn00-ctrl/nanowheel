@@ -1434,6 +1434,7 @@ input:focus,select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(10,1
   <div class="formrow3">
    <label>문서 종류<select id="apNewType" onchange="approvalRenderNewForm()"><option value="expense">지출결의서</option><option value="leave">직원 연차사용</option><option value="disposal">재고자산 폐기보고서</option><option value="general">일반결재</option></select></label>
    <label>결재자(승인받을 사람)<select id="apNewApprover"></select></label>
+   <label>결재자 직책(결재란 서명 위치)<select id="apNewApproverRole"><option value="대표이사" selected>대표이사</option><option value="실장">실장</option><option value="검토">검토</option></select></label>
   </div>
   <div id="apNewFormArea"></div>
   <button onclick="approvalSubmitNew()" style="margin-top:10px">결재 올리기</button>
@@ -1467,11 +1468,27 @@ input:focus,select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(10,1
 .ap-status.approved{background:#d9f2e4;color:#1e7a45}
 .ap-status.rejected{background:#fde2e0;color:#b3261e}
 .ap-status.executed{background:#e3ecfa;color:#1d4f9c}
-#approvalDocModal .ap-doc-sheet{border:1px solid #d2d2d7;border-radius:10px;padding:16px;background:#fff}
-#approvalDocModal .ap-doc-sheet h2{text-align:center;margin:4px 0 14px}
-#approvalDocModal table.ap-doc-table{width:100%;border-collapse:collapse}
-#approvalDocModal table.ap-doc-table th,#approvalDocModal table.ap-doc-table td{border:1px solid #d2d2d7;padding:7px 10px;font-size:13px;text-align:left}
-#approvalDocModal table.ap-doc-table th{background:#f5f5f7;width:130px;white-space:nowrap}
+/* ── 결재 서류 양식 (양식개선 2026-07-08) : 화면 모달과 인쇄가 같은 CSS를 씀 ── */
+.ap-doc-sheet{border:1.5px solid #222;padding:22px 26px;background:#fff;color:#111;font-size:13px}
+.ap-sheet-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:6px}
+.ap-sheet-title{font-size:30px;font-weight:800;letter-spacing:10px;padding-top:10px;white-space:nowrap}
+.ap-sign-table{border-collapse:collapse}
+.ap-sign-table th,.ap-sign-table td{border:1px solid #222;font-size:11px;padding:2px 6px;text-align:center}
+.ap-sign-table th{background:#f0f0f0;font-weight:600}
+.ap-sign-side{width:28px}
+.ap-sign-box{width:66px;height:50px;font-size:13px;font-weight:700;vertical-align:middle}
+.ap-sign-date{height:22px;font-size:11px}
+.ap-doc-no{text-align:right;font-size:11px;color:#555;margin:2px 0 8px}
+.ap-meta-table{width:100%;border-collapse:collapse;margin-bottom:12px}
+.ap-meta-table th,.ap-meta-table td{border:1px solid #222;padding:8px 10px;font-size:13px;text-align:left}
+.ap-meta-table th{background:#e9e9e9;width:112px;font-weight:700;white-space:nowrap;text-align:center}
+.ap-body-box{border:1px solid #222;min-height:170px;padding:14px 16px;line-height:1.8;font-size:13px}
+.ap-total-table{width:100%;border-collapse:collapse;margin-top:12px}
+.ap-total-table th{border:1.5px solid #222;background:#e9e9e9;width:150px;padding:10px;font-size:14px;text-align:center}
+.ap-total-table td{border:1.5px solid #222;padding:10px 16px;text-align:right;font-size:19px;font-weight:800}
+.ap-pay-date{margin-top:8px;font-size:12px;color:#333;text-align:right}
+.ap-sheet-footer{margin-top:28px;text-align:center;font-size:13px;letter-spacing:3px}
+.ap-reject-note{margin-top:10px;border:1px solid #b3261e;color:#b3261e;padding:8px 10px;font-size:12px;border-radius:6px;background:#fff5f5}
 </style>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -13772,7 +13789,8 @@ tr.row-selected td:first-child{box-shadow:inset 3px 0 0 #f0b429!important}
      '<label>금액<input id="apExpAmount" type="number" placeholder="0"></label>'+
      '<label>지급 요청일<input id="apExpPayDate" type="date" value="'+esc(todayStr())+'"></label>'+
     '</div>'+
-    '<div class="formrow3"><label style="flex:1">내용<input id="apExpContent" placeholder="예: 반품 환불 처리"></label></div>';
+    '<div class="formrow3"><label>수취인 연락처<input id="apExpPhone" placeholder="예: 010-1234-5678 (없으면 비움)"></label></div>'+
+    '<div class="formrow3"><label style="flex:1">내용(품목·내역 — 여러 줄로 적으면 서류에 그대로 나옵니다)<textarea id="apExpContent" rows="5" style="width:100%" placeholder="예)&#10;* 부산은행 법인카드 12월 청구분 자동이체&#10;9611 법인카드 사용요약&#10;지급수수료 외 1건  95,357&#10;합계  95,357"></textarea></label></div>';
   }else if(t==='leave'){
    const userOptions=users().map(u=>'<option value="'+esc(u)+'">'+esc(u)+'</option>').join('');
    area.innerHTML=
@@ -13817,9 +13835,10 @@ tr.row-selected td:first-child{box-shadow:inset 3px 0 0 #f0b429!important}
   const t=(document.getElementById('apNewType')||{}).value||'general';
   const val=id=>{ const el=document.getElementById(id); return el?String(el.value||'').trim():''; };
   const d={id:nextDocId(t), type:t, status:'pending', drafter:me, approver:approver,
+           approverRole:(document.getElementById('apNewApproverRole')||{}).value||'대표이사',
            createdAt:new Date().toISOString(), decidedAt:'', rejectReason:''};
   if(t==='expense'){
-   d.payee=val('apExpPayee'); d.bank=val('apExpBank'); d.account=val('apExpAccount');
+   d.payee=val('apExpPayee'); d.bank=val('apExpBank'); d.account=val('apExpAccount'); d.payeePhone=val('apExpPhone');
    d.cat=val('apExpCat'); d.amount=Number(val('apExpAmount'))||0; d.payDate=val('apExpPayDate'); d.content=val('apExpContent');
    d.execStatus='unexec'; d.matchedAt=''; d.matchedMemo='';
    if(!d.payee||d.amount<=0) return alert('수취인과 금액을 확인하세요.');
@@ -13858,40 +13877,67 @@ tr.row-selected td:first-child{box-shadow:inset 3px 0 0 #f0b429!important}
   if(m) m.classList.remove('active');
   try{ document.body.classList.remove('modal-open'); }catch(e){}
  };
+ /* 실제 회사 지출결의서 양식 재현 (양식개선 2026-07-08):
+    좌측 큰 제목 + 우측 결재란(담당/검토/실장/대표이사, 결재·일자 행) +
+    작성일자/작성자 표 + 내용란 + 총결제금액 + '상기 내용 결재 부탁드립니다.' */
+ function signTableHTML(d){
+  const role=d.approverRole||'대표이사';
+  const cols=['담당','검토','실장','대표이사'];
+  const draftDate=String(d.createdAt||'').slice(5,10).replace('-','/');
+  const decideDate=d.decidedAt?String(d.decidedAt).slice(5,10).replace('-','/'):'';
+  const signCell=c=>{
+   if(c==='담당') return esc(d.drafter||'');
+   if(c===role){
+    if(d.status==='approved') return esc(d.approver||'');
+    if(d.status==='rejected') return '<span style="color:#b3261e">반려</span>';
+   }
+   return '';
+  };
+  const dateCell=c=>{
+   if(c==='담당') return esc(draftDate);
+   if(c===role && d.status!=='pending') return esc(decideDate);
+   return '';
+  };
+  return '<table class="ap-sign-table">'+
+   '<tr><th class="ap-sign-side"></th>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr>'+
+   '<tr><th class="ap-sign-side">결재</th>'+cols.map(c=>'<td class="ap-sign-box">'+signCell(c)+'</td>').join('')+'</tr>'+
+   '<tr><th class="ap-sign-side">일자</th>'+cols.map(c=>'<td class="ap-sign-date">'+dateCell(c)+'</td>').join('')+'</tr>'+
+   '</table>';
+ }
  function docSheetHTML(d){
-  const rows=[];
-  const push=(k,v)=>rows.push('<tr><th>'+esc(k)+'</th><td>'+v+'</td></tr>');
-  push('문서번호', esc(d.id));
-  push('종류', esc(TYPE_LABEL[d.type]||d.type));
-  push('상태', statusBadge(d));
-  push('기안자', esc(d.drafter));
-  push('결재자', esc(d.approver));
-  push('기안일시', esc(String(d.createdAt||'').replace('T',' ').slice(0,16)));
-  if(d.decidedAt) push('처리일시', esc(String(d.decidedAt).replace('T',' ').slice(0,16)));
-  if(d.status==='rejected'&&d.rejectReason) push('반려 사유', esc(d.rejectReason));
+  const label=TYPE_LABEL[d.type]||'결재 문서';
+  const mrow=(k1,v1,k2,v2)=>'<tr><th>'+k1+'</th><td>'+v1+'</td><th>'+k2+'</th><td>'+v2+'</td></tr>';
+  const bodyBox=t=>'<div class="ap-body-box">'+((esc(t||'').replace(/\n/g,'<br>'))||'&nbsp;')+'</div>';
+  let meta='', body='';
+  meta+=mrow('작 성 일 자', esc(String(d.createdAt||'').slice(0,10)), '작 성 자', esc(d.drafter||''));
   if(d.type==='expense'){
-   push('수취인', esc(d.payee));
-   push('입금 계좌', esc((d.bank||'')+' '+(d.account||'')));
-   push('계정과목', esc(d.cat));
-   push('금액', '<b>'+fmt(d.amount)+'원</b>');
-   push('지급 요청일', esc(d.payDate||''));
-   push('내용', esc(d.content||''));
-   if(d.execStatus==='executed') push('집행', '집행완료 ('+esc(d.matchedAt||'')+') '+esc(d.matchedMemo||''));
-   else if(d.status==='approved') push('집행', '<span class="ap-status approved">미집행 — 비용 입력/은행 업로드와 매칭되면 자동으로 집행완료 처리</span>');
+   meta+=mrow('수취인 성함', esc(d.payee||''), '수취인 연락처', esc(d.payeePhone||'-'));
+   meta+=mrow('입금 계좌', esc(((d.bank||'')+' '+(d.account||'')).trim()), '계정과목', esc(d.cat||''));
+   body=bodyBox(d.content)+
+    '<table class="ap-total-table"><tr><th>총결제금액</th><td>'+fmt(d.amount)+'</td></tr></table>'+
+    '<div class="ap-pay-date">지급 요청일: '+esc(d.payDate||'')+
+     (d.execStatus==='executed'?' · 집행완료 '+esc(d.matchedAt||''):(d.status==='approved'?' · 미집행(비용 등록과 매칭되면 자동 집행완료)':''))+'</div>';
   }else if(d.type==='leave'){
-   push('대상 직원', esc(d.staff));
-   push('기간', esc((d.leaveStart||'')+' ~ '+(d.leaveEnd||'')));
-   push('사용 일수', esc(d.leaveDays)+'일');
-   push('사유', esc(d.content||''));
+   meta+=mrow('대상 직원', esc(d.staff||''), '사용 일수', esc(d.leaveDays)+'일');
+   meta+=mrow('연차 기간', esc((d.leaveStart||'')+' ~ '+(d.leaveEnd||'')), '구 분', '연차사용');
+   body=bodyBox(d.content?('사유: '+d.content):'');
   }else if(d.type==='disposal'){
-   push('폐기 대상', esc(d.title));
-   push('폐기 금액', fmt(d.amount)+'원');
-   push('품목/수량/사유', esc(d.content||'').replace(/\n/g,'<br>'));
+   meta+=mrow('폐기 대상', esc(d.title||''), '구 분', '재고자산 폐기');
+   body=bodyBox(d.content)+
+    '<table class="ap-total-table"><tr><th>폐기금액 합계</th><td>'+fmt(d.amount)+'</td></tr></table>';
   }else{
-   push('제목', esc(d.title));
-   push('내용', esc(d.content||'').replace(/\n/g,'<br>'));
+   meta+='<tr><th>제 목</th><td colspan="3">'+esc(d.title||'')+'</td></tr>';
+   body=bodyBox(d.content);
   }
-  return '<div class="ap-doc-sheet"><h2>'+esc(TYPE_LABEL[d.type]||'결재 문서')+'</h2><table class="ap-doc-table">'+rows.join('')+'</table></div>';
+  const reject=(d.status==='rejected'&&d.rejectReason)?'<div class="ap-reject-note">반려 사유: '+esc(d.rejectReason)+'</div>':'';
+  return '<div class="ap-doc-sheet">'+
+   '<div class="ap-sheet-top"><div class="ap-sheet-title">'+esc(label)+'</div>'+signTableHTML(d)+'</div>'+
+   '<div class="ap-doc-no">문서번호 '+esc(d.id)+'</div>'+
+   '<table class="ap-meta-table">'+meta+'</table>'+
+   body+
+   '<div class="ap-sheet-footer">상기 내용 결재 부탁드립니다.</div>'+
+   reject+
+   '</div>';
  }
  window.openApprovalDoc=function(id){
   const d=docs().find(x=>x.id===id);
@@ -13913,7 +13959,9 @@ tr.row-selected td:first-child{box-shadow:inset 3px 0 0 #f0b429!important}
    btns.push('<button class="secondary" onclick="approvalDeleteDoc(\''+esc(d.id)+'\')">기안 취소(삭제)</button>');
   }
   btns.push('<button class="secondary" onclick="approvalPrintDoc(\''+esc(d.id)+'\')">🖨 인쇄</button>');
-  document.getElementById('apDocModalBody').innerHTML=docSheetHTML(d)+
+  document.getElementById('apDocModalBody').innerHTML=
+   '<div style="margin-bottom:10px">'+statusBadge(d)+' <span class="small">기안 '+esc(d.drafter)+' → 결재 '+esc(d.approver)+' ('+esc(d.approverRole||'대표이사')+')</span></div>'+
+   docSheetHTML(d)+
    '<div class="modal-actions" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+btns.join('')+'</div>';
   m.classList.add('active');
   try{ document.body.classList.add('modal-open'); }catch(e){}
@@ -13958,15 +14006,12 @@ tr.row-selected td:first-child{box-shadow:inset 3px 0 0 #f0b429!important}
   if(!d) return;
   const w=window.open('','_blank');
   if(!w) return alert('팝업이 차단되어 인쇄 창을 열 수 없습니다. 팝업 허용 후 다시 시도하세요.');
-  w.document.write('<html><head><title>'+esc(d.id)+'</title><style>'+
-   'body{font-family:"Pretendard","Malgun Gothic",sans-serif;padding:28px}'+
-   'h2{text-align:center}table{width:100%;border-collapse:collapse}'+
-   'th,td{border:1px solid #333;padding:8px 10px;font-size:13px;text-align:left}th{background:#f0f0f0;width:130px}'+
-   '.ap-status{font-weight:700}.sign{margin-top:36px;display:flex;justify-content:flex-end;gap:40px;font-size:13px}'+
-   '.sign div{text-align:center}.sign .box{width:90px;height:60px;border:1px solid #333;margin-top:6px}'+
-   '</style></head><body>'+docSheetHTML(d)+
-   '<div class="sign"><div>기안자<br>'+esc(d.drafter)+'<div class="box"></div></div><div>결재자<br>'+esc(d.approver)+'<div class="box"></div></div></div>'+
-   '</body></html>');
+  /* 화면 모달과 동일한 서류 양식 CSS(#approvalV630)를 그대로 가져와 인쇄 */
+  let css=''; try{ css=(document.getElementById('approvalV630')||{}).textContent||''; }catch(e){}
+  w.document.write('<html><head><meta charset="utf-8"><title>'+esc(d.id)+'</title><style>'+
+   'body{font-family:"Pretendard","Malgun Gothic","맑은 고딕",sans-serif;padding:24px;background:#fff}'+
+   '@media print{body{padding:0}}'+css+
+   '</style></head><body>'+docSheetHTML(d)+'</body></html>');
   w.document.close();
   setTimeout(()=>{ try{ w.print(); }catch(e){} },300);
  };
