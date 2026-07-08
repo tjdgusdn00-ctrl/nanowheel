@@ -1441,6 +1441,11 @@ input:focus,select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(10,1
   <div id="apNewFormArea"></div>
   <button onclick="approvalSubmitNew()" style="margin-top:10px">결재 올리기</button>
  </div>
+ <!-- 연차 관리 V640 (2026-07-08) -->
+ <div class="card"><h3>직원 연차 관리 <span class="small">연차 결재가 승인되면 자동으로 차감됩니다 (오늘 기준)</span></h3>
+  <div class="notice">입사일을 입력하면 근로기준법 기준 연차가 자동 계산됩니다 — <b>1년 미만</b>: 만 1개월당 1일(최대 11일) / <b>1년 이상</b>: 15일 / <b>3년 이상</b>: 2년마다 1일 가산(최대 25일). 포상·촉진 등 추가/차감은 <b>조정(±)</b>에 일수로 입력하세요. 사용/잔여는 올해 1/1~12/31에 시작하는 <b>승인된 연차 결재</b> 기준으로 자동 집계됩니다.</div>
+  <div class="scroll" style="max-height:320px"><table id="leaveMgmtTable" class="sticky compact-table"></table></div>
+ </div>
  <div class="card"><h3>결재 문서함 <span class="badge-warn" id="apUnexecBadge" style="display:none">미집행 0건</span></h3>
   <div class="inventory-toolbar">
    <div>
@@ -13723,6 +13728,7 @@ tr.row-selected td:first-child{box-shadow:inset 3px 0 0 #f0b429!important}
   if(!window.state || typeof state!=='object') return false;
   if(!Array.isArray(state.approvalDocs)) state.approvalDocs=[];
   if(!Array.isArray(state.approvalUsers)) state.approvalUsers=[];
+  if(!state.leaveInfo || typeof state.leaveInfo!=='object' || Array.isArray(state.leaveInfo)) state.leaveInfo={}; /* 연차 관리 V640: {직원이름:{joinDate,adjustDays}} */
   /* 기간조회 개편(2026-07-08): 구버전 문서에 결재 요청일/승인완료일 필드 보정 */
   state.approvalDocs.forEach(d=>{
    if(!d.reqDate) d.reqDate=d.payDate||String(d.createdAt||'').slice(0,10);
@@ -13878,6 +13884,9 @@ tr.row-selected td:first-child{box-shadow:inset 3px 0 0 #f0b429!important}
    d.staff=val('apLvStaff'); d.leaveStart=val('apLvStart'); d.leaveEnd=val('apLvEnd');
    d.leaveDays=Number(val('apLvDays'))||0; d.content=val('apLvReason');
    if(!d.staff||!d.leaveStart||!d.leaveEnd||d.leaveDays<=0) return alert('대상 직원과 기간/일수를 확인하세요.');
+   /* 연차 관리 V640: 잔여 연차 초과 신청 경고 (막지는 않음 — 결재자가 판단) */
+   const __remain=leaveRemain(d.staff);
+   if(d.leaveDays>__remain && !confirm('⚠ '+d.staff+'의 잔여 연차는 '+__remain+'일인데 '+d.leaveDays+'일을 신청합니다.\n그래도 결재를 올릴까요?')) return;
   }else if(t==='disposal'){
    d.title=val('apDsTitle'); d.amount=Number(val('apDsAmount'))||0; d.content=val('apDsContent');
    if(!d.title) return alert('폐기 대상(제목)을 입력하세요.');
@@ -14085,6 +14094,94 @@ tr.row-selected td:first-child{box-shadow:inset 3px 0 0 #f0b429!important}
   return unexecExpenseDocs().find(d=>Number(d.amount)===amount && d.payee && desc.includes(norm(d.payee)))||null;
  };
 
+ /* ---------- 직원 연차 관리 V640 (2026-07-08) ----------
+    데이터: state.leaveInfo = { 직원이름: {joinDate:'YYYY-MM-DD', adjustDays:숫자} }
+    사용일수는 저장하지 않고 승인된 연차 결재(type=leave)에서 매번 집계 → 이중차감 없음 */
+ function leaveInfoMap(){ ensureApprovalState(); return state.leaveInfo; }
+ function leaveMonthsSince(join){
+  if(!join) return -1;
+  const j=new Date(join+'T00:00:00'); if(isNaN(j.getTime())) return -1;
+  const now=new Date(todayStr()+'T00:00:00');
+  if(now<j) return -1;
+  let months=(now.getFullYear()-j.getFullYear())*12+(now.getMonth()-j.getMonth());
+  if(now.getDate()<j.getDate()) months--;
+  return Math.max(months,0);
+ }
+ /* 근로기준법 제60조 기준: 1년 미만 만 1개월당 1일(최대 11), 1년 이상 15일,
+    3년 이상 근속부터 최초 1년 초과 매 2년마다 1일 가산, 총 25일 한도 */
+ function leaveEntitled(join){
+  const months=leaveMonthsSince(join);
+  if(months<0) return 0;
+  const years=Math.floor(months/12);
+  if(years<1) return Math.min(months,11);
+  return Math.min(15+Math.floor((years-1)/2),25);
+ }
+ function leaveTenureText(join){
+  const months=leaveMonthsSince(join);
+  if(months<0) return '-';
+  return Math.floor(months/12)+'년 '+(months%12)+'개월';
+ }
+ function leaveDocsOf(name){ return docs().filter(d=>d.type==='leave'&&d.staff===name); }
+ function leaveSumDays(name,year,status){
+  return leaveDocsOf(name).filter(d=>d.status===status&&String(d.leaveStart||'').startsWith(year))
+   .reduce((s,d)=>s+(Number(d.leaveDays)||0),0);
+ }
+ function leaveRemain(name){
+  const y=todayStr().slice(0,4);
+  const info=leaveInfoMap()[name]||{};
+  return leaveEntitled(info.joinDate)+(Number(info.adjustDays)||0)-leaveSumDays(name,y,'approved');
+ }
+ window.leaveSetJoinDate=function(name,v){
+  const m=leaveInfoMap(); if(!m[name]) m[name]={};
+  m[name].joinDate=String(v||''); saveAll(); window.renderLeaveMgmt();
+ };
+ window.leaveSetAdjust=function(name,v){
+  const m=leaveInfoMap(); if(!m[name]) m[name]={};
+  m[name].adjustDays=Number(v)||0; saveAll(); window.renderLeaveMgmt();
+ };
+ window.renderLeaveMgmt=function(){
+  const table=document.getElementById('leaveMgmtTable');
+  if(!table) return;
+  const list=users();
+  const y=todayStr().slice(0,4);
+  const head='<tr><th>직원</th><th>입사일</th><th>근속</th><th>발생연차</th><th>조정(±)</th><th>사용('+y+')</th><th>결재중</th><th>잔여</th><th>사용내역</th></tr>';
+  if(!list.length){ table.innerHTML=head+'<tr><td colspan="9" class="small" style="text-align:center;padding:14px">아래 결재 기초설정에서 직원을 먼저 등록하세요.</td></tr>'; return; }
+  table.innerHTML=head+list.map(name=>{
+   const info=leaveInfoMap()[name]||{};
+   const ent=leaveEntitled(info.joinDate);
+   const adj=Number(info.adjustDays)||0;
+   const used=leaveSumDays(name,y,'approved');
+   const pend=leaveSumDays(name,y,'pending');
+   const remain=ent+adj-used;
+   const nm=esc(name);
+   return '<tr>'+
+    '<td><b>'+nm+'</b></td>'+
+    '<td><input type="date" value="'+esc(info.joinDate||'')+'" onchange="leaveSetJoinDate(\''+nm+'\',this.value)" style="width:150px"></td>'+
+    '<td>'+leaveTenureText(info.joinDate)+'</td>'+
+    '<td style="text-align:right">'+ent+'일</td>'+
+    '<td><input type="number" step="0.5" value="'+adj+'" onchange="leaveSetAdjust(\''+nm+'\',this.value)" style="width:70px;text-align:right"></td>'+
+    '<td style="text-align:right">'+used+'일</td>'+
+    '<td style="text-align:right">'+(pend?pend+'일':'-')+'</td>'+
+    '<td style="text-align:right;font-weight:800'+(remain<0?';color:#b3261e':'')+'">'+remain+'일</td>'+
+    '<td><button class="secondary" onclick="openLeaveHistory(\''+nm+'\')">내역</button></td>'+
+    '</tr>';
+  }).join('');
+ };
+ window.openLeaveHistory=function(name){
+  const m=ensureModal();
+  const rows=leaveDocsOf(name).sort((a,b)=>String(b.leaveStart||'').localeCompare(String(a.leaveStart||'')));
+  document.getElementById('apDocModalTitle').textContent='연차 사용내역 · '+name;
+  document.getElementById('apDocModalBody').innerHTML=
+   (rows.length
+    ?'<table class="compact-table" style="width:100%"><tr><th>문서번호</th><th>기간</th><th>일수</th><th>사유</th><th>상태</th></tr>'+
+     rows.map(d=>'<tr onclick="openApprovalDoc(\''+esc(d.id)+'\')" style="cursor:pointer"><td>'+esc(d.id)+'</td><td>'+esc((d.leaveStart||'')+' ~ '+(d.leaveEnd||''))+'</td><td style="text-align:right">'+esc(d.leaveDays)+'일</td><td>'+esc(d.content||'')+'</td><td>'+statusBadge(d)+'</td></tr>').join('')+
+     '</table><div class="small" style="margin-top:8px">줄을 클릭하면 해당 결재 문서가 열립니다.</div>'
+    :'<div class="small" style="padding:14px;text-align:center">연차 결재 이력이 없습니다.</div>')+
+   '<div class="modal-actions"><button class="secondary" onclick="closeApprovalDoc()">닫기</button></div>';
+  m.classList.add('active');
+  try{ document.body.classList.add('modal-open'); }catch(e){}
+ };
+
  /* ---------- 목록/요약 렌더 ---------- */
  window.__apFilter=window.__apFilter||'all';
  window.approvalSetFilter=function(f){ window.__apFilter=f; window.renderApprovalView(); };
@@ -14174,6 +14271,7 @@ tr.row-selected td:first-child{box-shadow:inset 3px 0 0 #f0b429!important}
   renderUserTable();
   renderSummary();
   renderList();
+  window.renderLeaveMgmt(); /* 연차 관리 V640 */
   const req=document.getElementById('apNewReqDate');
   if(req&&!req.value) req.value=todayStr();
   const area=document.getElementById('apNewFormArea');
