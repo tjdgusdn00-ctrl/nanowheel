@@ -816,6 +816,7 @@ input:focus,select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(10,1
   <div class="nav-group" data-group="money"><div class="nav-group-title">② 돈 흐름</div><div class="nav-group-tabs"><button class="tab" data-view="expense">비용 입력</button><button class="tab" data-view="deposit">입금 입력</button><button class="tab" data-view="settlement">정산관리</button><button class="tab" data-view="liquidityAsset">유동성 자산</button></div></div>
   <div class="nav-group" data-group="inventory"><div class="nav-group-title">③ 재고</div><div class="nav-group-tabs"><button class="tab" data-view="incomingInventory">입고예정</button><button class="tab" data-view="miscInv">잡화 재고</button><button class="tab" data-view="grassInv">인조잔디 재고</button></div></div>
   <div class="nav-group" data-group="analysis"><div class="nav-group-title">④ 분석·관리</div><div class="nav-group-tabs"><button class="tab" data-view="profitAnalysis">N광고효율분석</button><button class="tab" data-view="productMap">상품매칭</button><button class="tab" data-view="settings">설정</button></div></div>
+  <div class="nav-group" data-group="approval"><div class="nav-group-title">⑤ 인사·결재</div><div class="nav-group-tabs"><button class="tab" data-view="approval">전자결재 <span id="approvalTabBadge" class="approval-tab-badge" style="display:none">0</span></button></div></div>
  </div>
 </nav>
 <div class="datebar"><b>조회기간</b><input id="globalStartDate" type="date"><span>~</span><input id="globalEndDate" type="date"><button onclick="changeSelectedRange()">조회</button><button class="secondary" onclick="setQuickRange(0)">오늘</button><button class="secondary" onclick="setYesterdayRange()">어제</button><button class="secondary" onclick="setQuickRange(6)">최근 7일</button><button class="secondary" onclick="setThisMonth()">이번달</button><span style="width:1px;height:28px;background:#d2d2d7;display:inline-block"></span><b>통합 업로드 반영기준일</b><input id="globalUploadApplyDate" type="date" onchange="changeGlobalUploadApplyDate()"><span class="small">한 번 설정하면 판매/송장/반품/비용은행/입금은행/정산/손익 업로드에 공통 적용됩니다.</span></div>
@@ -1414,6 +1415,64 @@ input:focus,select:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(10,1
   </div>
  </div>
 </div>
+<!-- ===== 전자결재 V630 (2026-07-08) : 화면 ===== -->
+<section id="approval" class="view">
+ <div class="card"><h2>전자결재 <span class="small">서버 도입 전 단계 — 백업파일 주고받기로 공유</span></h2>
+  <div class="notice">기안자가 결재 문서를 작성해 올리면 지정된 결재자가 승인/반려합니다. 승인된 <b>지출결의서</b>는 비용 입력(수기 등록·은행 업로드)과 <b>금액+수취인/계정과목</b>으로 자동 매칭되어 '집행완료'로 바뀝니다. ⚠ 아직 서버가 없으므로 결재 데이터는 이 컴퓨터에만 저장됩니다 — 작업 후 <b>설정 탭 → 백업파일 저장</b>으로 다른 컴퓨터와 주고받으세요. (동시에 두 컴퓨터에서 작성 금지)</div>
+  <div class="formrow3" style="align-items:flex-end">
+   <label>현재 사용자(내 이름)<select id="approvalCurrentUser" onchange="approvalSetCurrentUser()"></select></label>
+   <span class="small" id="approvalUserHint">직원 명단은 아래 '결재 기초설정'에서 등록합니다. 현재 사용자는 이 컴퓨터에만 기억됩니다.</span>
+  </div>
+  <div class="expense-summary-grid">
+   <div class="expense-summary-card"><div class="label">결재 대기</div><div class="value" id="apCardPending">0건</div></div>
+   <div class="expense-summary-card"><div class="label">내가 결재할 문서</div><div class="value" id="apCardMine">0건</div></div>
+   <div class="expense-summary-card"><div class="label">승인·미집행 지출</div><div class="value" id="apCardUnexec">0건</div></div>
+   <div class="expense-summary-card"><div class="label">미집행 금액</div><div class="value" id="apCardUnexecAmt">0원</div></div>
+  </div>
+ </div>
+ <div class="card"><h3>새 결재 올리기</h3>
+  <div class="formrow3">
+   <label>문서 종류<select id="apNewType" onchange="approvalRenderNewForm()"><option value="expense">지출결의서</option><option value="leave">직원 연차사용</option><option value="disposal">재고자산 폐기보고서</option><option value="general">일반결재</option></select></label>
+   <label>결재자(승인받을 사람)<select id="apNewApprover"></select></label>
+  </div>
+  <div id="apNewFormArea"></div>
+  <button onclick="approvalSubmitNew()" style="margin-top:10px">결재 올리기</button>
+ </div>
+ <div class="card"><h3>결재 문서함 <span class="badge-warn" id="apUnexecBadge" style="display:none">미집행 0건</span></h3>
+  <div class="inventory-toolbar">
+   <div>
+    <button class="secondary ap-filter" data-f="all" onclick="approvalSetFilter('all')">전체</button>
+    <button class="secondary ap-filter" data-f="pending" onclick="approvalSetFilter('pending')">대기</button>
+    <button class="secondary ap-filter" data-f="approved" onclick="approvalSetFilter('approved')">승인완료</button>
+    <button class="secondary ap-filter" data-f="unexec" onclick="approvalSetFilter('unexec')">승인·미집행 지출</button>
+    <button class="secondary ap-filter" data-f="rejected" onclick="approvalSetFilter('rejected')">반려</button>
+   </div>
+   <span class="small">문서를 클릭하면 상세/결재 처리 화면이 열립니다.</span>
+  </div>
+  <div class="scroll" style="max-height:480px"><table id="approvalListTable" class="sticky compact-table"></table></div>
+ </div>
+ <details class="base-settings-details"><summary>결재 기초설정 <span class="small">직원(사용자) 명단 관리</span></summary>
+  <div class="card"><h3>직원 명단 <span class="badge-info" id="apUserCount">0명</span></h3>
+   <div class="account-add-row"><label>직원 이름<input id="apNewUserName" placeholder="예: 홍길동" onkeydown="if(event.key==='Enter') approvalAddUser()"></label><button onclick="approvalAddUser()">직원 추가</button></div>
+   <div id="approvalUserTable" style="margin-top:10px"></div>
+   <div class="notice">서버 도입 전 임시 명단입니다. 여기 등록된 이름이 기안자/결재자 선택에 쓰입니다. 서버화 때 ID/비밀번호/권한 체계로 이관됩니다.</div>
+  </div>
+ </details>
+</section>
+<style id="approvalV630">
+#approval .ap-filter.active{background:#1d1d1f;color:#fff}
+.approval-tab-badge{display:inline-block;min-width:16px;padding:0 5px;border-radius:9px;background:#ff3b30;color:#fff;font-size:11px;line-height:16px;text-align:center;vertical-align:middle}
+.ap-status{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:600}
+.ap-status.pending{background:#fff3cd;color:#8a6d00}
+.ap-status.approved{background:#d9f2e4;color:#1e7a45}
+.ap-status.rejected{background:#fde2e0;color:#b3261e}
+.ap-status.executed{background:#e3ecfa;color:#1d4f9c}
+#approvalDocModal .ap-doc-sheet{border:1px solid #d2d2d7;border-radius:10px;padding:16px;background:#fff}
+#approvalDocModal .ap-doc-sheet h2{text-align:center;margin:4px 0 14px}
+#approvalDocModal table.ap-doc-table{width:100%;border-collapse:collapse}
+#approvalDocModal table.ap-doc-table th,#approvalDocModal table.ap-doc-table td{border:1px solid #d2d2d7;padding:7px 10px;font-size:13px;text-align:left}
+#approvalDocModal table.ap-doc-table th{background:#f5f5f7;width:130px;white-space:nowrap}
+</style>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
@@ -4101,7 +4160,8 @@ function render(){
   productMap:[['상품매칭관리',()=>renderProductMapping()]],
   miscInv:[['재고자산 표',()=>renderInvTables()]],
   grassInv:[['재고자산 표',()=>renderInvTables()]],
-  settings:[['기초자산 잠금표',()=>renderBaselineLockTable()],['은행잔액 검증',()=>renderBankBalanceCheck()],['계정 관리자',()=>renderAccountManagers()],['은행 매칭 검토',()=>renderBankMatchingViews()]]
+  settings:[['기초자산 잠금표',()=>renderBaselineLockTable()],['은행잔액 검증',()=>renderBankBalanceCheck()],['계정 관리자',()=>renderAccountManagers()],['은행 매칭 검토',()=>renderBankMatchingViews()]],
+  approval:[['전자결재',()=>{ if(typeof renderApprovalView==='function') renderApprovalView(); }]] /* 전자결재 V630 (2026-07-08) */
  };
  (__viewJobs[__activeView]||[]).forEach(([__label,__job])=>safeRun(__label,__job));
  safeRun('합계 행 적용',()=>applyListTotalsToTables());
@@ -7169,6 +7229,7 @@ function addExpense(){
  const reflectDate=manualApplyDate('expenseManualDate');
  const expenseRecord={date:reflectDate,cat,amount,memo};
  state.expenseRecords.push(expenseRecord);
+ try{ if(typeof v630OnExpenseRecordAdded==='function') v630OnExpenseRecordAdded(expenseRecord); }catch(e){ console.warn('전자결재 매칭 실패(무시)',e); } /* 전자결재 V630 */
  state.cash-=amount;
  if(cat===COURIER_PAYABLE_EXPENSE_CAT) applyCourierPayablePayment(reflectDate,amount,memo||'수기 비용등록','MANUAL-COURIER-'+Date.now()+'-'+Math.floor(Math.random()*1000));
  if(cat===IMPORT_PURCHASE_CAT) makeIncomingTxFromExpense(reflectDate,amount,memo||'수기 비용등록');
@@ -7258,7 +7319,9 @@ function applyBankMatchedTransaction(kind, tx, cat, memoPrefix){
  if(kind==='expense'){
   if(!(cat in state.expenses)) state.expenses[cat]=0;
   if(!Array.isArray(state.expenseRecords)) state.expenseRecords=[];
-  state.expenseRecords.push({date:tx.date,cat,amount:tx.amount,memo,bankKey:key});
+  const __apRec={date:tx.date,cat,amount:tx.amount,memo,bankKey:key}; /* 전자결재 V630 */
+  state.expenseRecords.push(__apRec);
+  try{ if(typeof v630OnExpenseRecordAdded==='function') v630OnExpenseRecordAdded(__apRec,tx.desc); }catch(e){ console.warn('전자결재 매칭 실패(무시)',e); }
   state.cash-=tx.amount;
   if(cat===COURIER_PAYABLE_EXPENSE_CAT) applyCourierPayablePayment(tx.date,tx.amount,memo,key);
   if(cat===IMPORT_PURCHASE_CAT) makeIncomingTxFromExpense(tx.date,tx.amount,memo,key);
@@ -7311,7 +7374,13 @@ function uploadBankFile(kind){
    if(!tx.amount || tx.amount<=0){ignored++; return;}
    const rule=findBankRule(kind, tx.desc);
    if(rule){ if(addBankPending(kind,tx,rule)) pending++; else skip++; }
-   else { if(addBankUnmatched(kind,tx)) unmatched++; else skip++; }
+   else {
+    /* 전자결재 V630: 매칭규칙이 없어도 승인·미집행 지출결의서와 금액+수취인이 맞으면
+       결의서의 계정과목으로 자동분류 검토목록에 올린다 (사용자가 등록을 눌러야 최종 반영). */
+    const __apDoc=(kind==='expense' && typeof v630FindApprovalForBankTx==='function') ? v630FindApprovalForBankTx(tx) : null;
+    if(__apDoc){ if(addBankPending(kind,tx,{cat:__apDoc.cat,keyword:'전자결재 '+__apDoc.id})) pending++; else skip++; }
+    else if(addBankUnmatched(kind,tx)) unmatched++; else skip++;
+   }
   });
   fillBankRuleCategorySelects();
   render();
@@ -7550,7 +7619,7 @@ function renderBankMatchingViews(){
  });
 }
 
-function uploadExpenseFile(){ const f=expenseUpload.files[0]; if(!f) return alert('비용현황 파일을 선택하세요.'); readRowsFromFile(f, rows=>{let ok=0, fail=[]; rows.forEach((r,i)=>{let rowDate=String(getVal(r,['일자','날짜','등록일'])||selectedEndDate).trim()||selectedEndDate; let cat=String(getVal(r,['구분','비용구분','계정과목'])).trim(); let amt=num(getVal(r,['금액','비용','지출금액'])); let memo=String(getVal(r,['비고','메모','내용'])).trim(); if(!cat||amt<=0){fail.push(`${i+2}행 구분/금액 확인`); return;} if(!(cat in state.expenses)) state.expenses[cat]=0; state.expenseRecords.push({date:rowDate,cat,amount:amt,memo}); state.cash-=amt; if(cat===COURIER_PAYABLE_EXPENSE_CAT) applyCourierPayablePayment(rowDate,amt,memo||'비용파일 업로드','FILE-COURIER-'+rowDate+'-'+i+'-'+Math.floor(Math.random()*1000)); if(cat===IMPORT_PURCHASE_CAT) makeIncomingTxFromExpense(rowDate,amt,memo||'비용파일 업로드'); ok++;}); expenseCat.innerHTML=renderCategoryOptions(state.expenses); render(); alert(`비용현황 업로드 완료\n성공: ${ok}건\n실패: ${fail.length}건${fail.length?'\n\n'+fail.slice(0,10).join('\n'):''}`); }); }
+function uploadExpenseFile(){ const f=expenseUpload.files[0]; if(!f) return alert('비용현황 파일을 선택하세요.'); readRowsFromFile(f, rows=>{let ok=0, fail=[]; rows.forEach((r,i)=>{let rowDate=String(getVal(r,['일자','날짜','등록일'])||selectedEndDate).trim()||selectedEndDate; let cat=String(getVal(r,['구분','비용구분','계정과목'])).trim(); let amt=num(getVal(r,['금액','비용','지출금액'])); let memo=String(getVal(r,['비고','메모','내용'])).trim(); if(!cat||amt<=0){fail.push(`${i+2}행 구분/금액 확인`); return;} if(!(cat in state.expenses)) state.expenses[cat]=0; const __apRec={date:rowDate,cat,amount:amt,memo}; state.expenseRecords.push(__apRec); try{ if(typeof v630OnExpenseRecordAdded==='function') v630OnExpenseRecordAdded(__apRec); }catch(e){} state.cash-=amt; if(cat===COURIER_PAYABLE_EXPENSE_CAT) applyCourierPayablePayment(rowDate,amt,memo||'비용파일 업로드','FILE-COURIER-'+rowDate+'-'+i+'-'+Math.floor(Math.random()*1000)); if(cat===IMPORT_PURCHASE_CAT) makeIncomingTxFromExpense(rowDate,amt,memo||'비용파일 업로드'); ok++;}); expenseCat.innerHTML=renderCategoryOptions(state.expenses); render(); alert(`비용현황 업로드 완료\n성공: ${ok}건\n실패: ${fail.length}건${fail.length?'\n\n'+fail.slice(0,10).join('\n'):''}`); }); }
 function uploadDepositFile(){ const f=depositUpload.files[0]; if(!f) return alert('입금현황 파일을 선택하세요.'); readRowsFromFile(f, rows=>{let ok=0, fail=[]; rows.forEach((r,i)=>{let rowDate=String(getVal(r,['일자','날짜','등록일'])||selectedEndDate).trim()||selectedEndDate; let cat=String(getVal(r,['구분','입금구분','계정과목'])).trim(); let amt=num(getVal(r,['금액','입금액','입금금액'])); let memo=String(getVal(r,['비고','메모','내용'])).trim(); if(!cat||amt<=0){fail.push(`${i+2}행 구분/금액 확인`); return;} if(!(cat in state.deposits)) state.deposits[cat]=0; state.depositRecords.push({date:rowDate,cat,amount:amt,memo}); state.cash+=amt; if(cat==='정산입금') state.receivable-=amt; ok++;}); depositCat.innerHTML=renderCategoryOptions(state.deposits); render(); alert(`입금현황 업로드 완료\n성공: ${ok}건\n실패: ${fail.length}건${fail.length?'\n\n'+fail.slice(0,10).join('\n'):''}`); }); }
 function downloadTemplate(kind){
  let csv='';
@@ -13599,6 +13668,423 @@ tr.row-selected td:first-child{box-shadow:inset 3px 0 0 #f0b429!important}
    var inp=document.getElementById('menuSearchInput');
    if(inp) inp.addEventListener('keydown', function(e){ if(e.key==='Enter' && e.shiftKey){ e.preventDefault(); window.openIntegratedSearchModal(); } });
   }catch(e){}
+})();
+</script>
+
+<script>
+/* ============================================================
+   전자결재 V630 (2026-07-08)
+   - 문서 4종: 지출결의서 / 직원 연차사용 / 재고자산 폐기보고서 / 일반결재
+   - 흐름: 기안(작성) → 대기 → 결재자 승인/반려 → (지출결의서) 집행 매칭
+   - 지출 매칭: 승인·미집행 지출결의서는 비용 등록(수기/은행검토 등록/비용파일)과
+     금액+계정과목(또는 수취인 이름 포함)으로 자동 매칭 → '집행완료'.
+     은행 업로드 시 매칭규칙이 없어도 결의서 금액+수취인이 맞으면
+     결의서 계정과목으로 자동분류 검토목록에 올라감 (uploadBankFile 안 V630 분기).
+   - 데이터: state.approvalDocs / state.approvalUsers → 백업 JSON에 자동 포함.
+     '현재 사용자'만 이 컴퓨터 localStorage(v630_user)에 기억 (서버 전 임시).
+   - ⚠ 서버 도입 전까지는 백업파일 주고받기로 공유. 동시 편집 금지.
+   ============================================================ */
+(function(){
+ 'use strict';
+ const esc=v=>String(v??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+ const fmt=n=>Number(n||0).toLocaleString('ko-KR');
+ const todayStr=()=> (typeof getTodayStr==='function'? getTodayStr() : new Date().toISOString().slice(0,10));
+ const norm=v=> (typeof cleanKey==='function'? cleanKey(v) : String(v??'').trim().replace(/\s+/g,''));
+
+ const TYPE_LABEL={expense:'지출결의서', leave:'직원 연차사용', disposal:'재고자산 폐기보고서', general:'일반결재'};
+ const TYPE_PREFIX={expense:'지출', leave:'연차', disposal:'폐기', general:'일반'};
+
+ function ensureApprovalState(){
+  if(!window.state || typeof state!=='object') return false;
+  if(!Array.isArray(state.approvalDocs)) state.approvalDocs=[];
+  if(!Array.isArray(state.approvalUsers)) state.approvalUsers=[];
+  return true;
+ }
+ function docs(){ ensureApprovalState(); return state.approvalDocs; }
+ function users(){ ensureApprovalState(); return state.approvalUsers; }
+ function currentUser(){ try{ return localStorage.getItem('v630_user')||''; }catch(e){ return ''; } }
+ function saveAll(){ try{ if(typeof saveData==='function') saveData(); }catch(e){ console.warn('전자결재 저장 실패',e); } }
+ function toast(msg,kind){ try{ if(typeof uxToast==='function') uxToast(msg,kind); }catch(e){} }
+
+ function nextDocId(type){
+  const year=String(new Date().getFullYear());
+  const prefix=(TYPE_PREFIX[type]||'문서')+'-'+year+'-';
+  let max=0;
+  docs().forEach(d=>{ if(String(d.id||'').startsWith(prefix)){ const n=Number(String(d.id).slice(prefix.length)); if(n>max) max=n; } });
+  return prefix+String(max+1).padStart(3,'0');
+ }
+ function docTitle(d){
+  if(d.type==='expense') return '지출결의서 - '+(d.payee||'')+' '+fmt(d.amount)+'원 ('+(d.cat||'')+')';
+  if(d.type==='leave') return '연차사용 - '+(d.staff||'')+' '+(d.leaveStart||'')+'~'+(d.leaveEnd||'')+' ('+(d.leaveDays||0)+'일)';
+  if(d.type==='disposal') return '재고폐기 - '+(d.title||'')+(d.amount?(' '+fmt(d.amount)+'원'):'');
+  return d.title||'일반결재';
+ }
+ function statusBadge(d){
+  if(d.status==='pending') return '<span class="ap-status pending">결재 대기</span>';
+  if(d.status==='rejected') return '<span class="ap-status rejected">반려</span>';
+  if(d.status==='approved'){
+   if(d.type==='expense') return d.execStatus==='executed' ? '<span class="ap-status executed">승인·집행완료</span>' : '<span class="ap-status approved">승인·미집행</span>';
+   return '<span class="ap-status approved">승인완료</span>';
+  }
+  return esc(d.status||'');
+ }
+
+ /* ---------- 직원(사용자) 명단 ---------- */
+ window.approvalAddUser=function(){
+  const inp=document.getElementById('apNewUserName');
+  const name=(inp&&inp.value||'').trim();
+  if(!name) return alert('직원 이름을 입력하세요.');
+  if(users().includes(name)) return alert('이미 등록된 이름입니다.');
+  users().push(name); saveAll();
+  if(inp) inp.value='';
+  window.renderApprovalView();
+  toast('직원 "'+name+'" 등록 완료');
+ };
+ window.approvalRemoveUser=function(name){
+  const used=docs().some(d=>d.drafter===name||d.approver===name);
+  if(used && !confirm('"'+name+'" 이름이 기존 결재 문서에 사용 중입니다. 명단에서만 삭제할까요? (문서는 그대로 남습니다)')) return;
+  if(!used && !confirm('"'+name+'" 직원을 명단에서 삭제할까요?')) return;
+  state.approvalUsers=users().filter(u=>u!==name); saveAll();
+  window.renderApprovalView();
+ };
+ window.approvalSetCurrentUser=function(){
+  const sel=document.getElementById('approvalCurrentUser');
+  try{ localStorage.setItem('v630_user', sel?sel.value:''); }catch(e){}
+  window.renderApprovalView();
+ };
+
+ /* ---------- 새 결재 작성 폼 ---------- */
+ window.approvalRenderNewForm=function(){
+  const area=document.getElementById('apNewFormArea');
+  const typeSel=document.getElementById('apNewType');
+  if(!area||!typeSel) return;
+  const t=typeSel.value;
+  const catOptions=Object.keys((window.state&&state.expenses)||{}).map(c=>'<option value="'+esc(c)+'"'+(c==='환불금'?' selected':'')+'>'+esc(c)+'</option>').join('');
+  if(t==='expense'){
+   area.innerHTML=
+    '<div class="formrow3">'+
+     '<label>수취인(입금받을 사람)<input id="apExpPayee" placeholder="예: 이정희"></label>'+
+     '<label>은행<input id="apExpBank" placeholder="예: 기업은행"></label>'+
+     '<label>계좌번호<input id="apExpAccount" placeholder="예: 1111-2222-3333"></label>'+
+    '</div>'+
+    '<div class="formrow3">'+
+     '<label>계정과목<select id="apExpCat">'+catOptions+'</select></label>'+
+     '<label>금액<input id="apExpAmount" type="number" placeholder="0"></label>'+
+     '<label>지급 요청일<input id="apExpPayDate" type="date" value="'+esc(todayStr())+'"></label>'+
+    '</div>'+
+    '<div class="formrow3"><label style="flex:1">내용<input id="apExpContent" placeholder="예: 반품 환불 처리"></label></div>';
+  }else if(t==='leave'){
+   const userOptions=users().map(u=>'<option value="'+esc(u)+'">'+esc(u)+'</option>').join('');
+   area.innerHTML=
+    '<div class="formrow3">'+
+     '<label>대상 직원<select id="apLvStaff">'+(userOptions||'<option value="">직원 명단을 먼저 등록하세요</option>')+'</select></label>'+
+     '<label>시작일<input id="apLvStart" type="date" value="'+esc(todayStr())+'" onchange="approvalCalcLeaveDays()"></label>'+
+     '<label>종료일<input id="apLvEnd" type="date" value="'+esc(todayStr())+'" onchange="approvalCalcLeaveDays()"></label>'+
+    '</div>'+
+    '<div class="formrow3">'+
+     '<label>사용 일수<input id="apLvDays" type="number" step="0.5" value="1"></label>'+
+     '<label style="flex:1">사유<input id="apLvReason" placeholder="예: 개인 사유"></label>'+
+    '</div>'+
+    '<div class="small">일수는 주말 포함 단순 계산으로 자동 입력됩니다. 반차(0.5일) 등은 직접 고쳐 쓰세요.</div>';
+  }else if(t==='disposal'){
+   area.innerHTML=
+    '<div class="formrow3">'+
+     '<label>폐기 대상(제목)<input id="apDsTitle" placeholder="예: 파티션난로 불량 3대"></label>'+
+     '<label>폐기 금액(원가 합계)<input id="apDsAmount" type="number" placeholder="0"></label>'+
+    '</div>'+
+    '<div class="formrow3"><label style="flex:1">폐기 품목/수량/사유<textarea id="apDsContent" rows="3" style="width:100%" placeholder="품목, 수량, LOT, 폐기 사유를 적어주세요"></textarea></label></div>'+
+    '<div class="small">승인되어도 재고 수량은 자동 차감되지 않습니다. 승인 후 해당 재고 탭에서 수동 출고 처리하세요(추후 자동화 예정).</div>';
+  }else{
+   area.innerHTML=
+    '<div class="formrow3"><label style="flex:1">제목<input id="apGnTitle" placeholder="결재 제목"></label></div>'+
+    '<div class="formrow3"><label style="flex:1">내용<textarea id="apGnContent" rows="4" style="width:100%" placeholder="결재 내용을 적어주세요"></textarea></label></div>';
+  }
+ };
+ window.approvalCalcLeaveDays=function(){
+  const s=document.getElementById('apLvStart'), e=document.getElementById('apLvEnd'), d=document.getElementById('apLvDays');
+  if(!s||!e||!d||!s.value||!e.value) return;
+  const diff=Math.round((new Date(e.value)-new Date(s.value))/86400000)+1;
+  if(diff>0) d.value=diff;
+ };
+
+ window.approvalSubmitNew=function(){
+  if(!ensureApprovalState()) return alert('데이터가 아직 준비되지 않았습니다.');
+  const me=currentUser();
+  if(!me) return alert('먼저 위에서 "현재 사용자(내 이름)"를 선택하세요. 명단이 비어 있으면 아래 결재 기초설정에서 직원을 등록하세요.');
+  const approver=(document.getElementById('apNewApprover')||{}).value||'';
+  if(!approver) return alert('결재자를 선택하세요.');
+  if(approver===me && !confirm('결재자가 본인입니다. 본인 결재(자가 승인)로 올릴까요?')) return;
+  const t=(document.getElementById('apNewType')||{}).value||'general';
+  const val=id=>{ const el=document.getElementById(id); return el?String(el.value||'').trim():''; };
+  const d={id:nextDocId(t), type:t, status:'pending', drafter:me, approver:approver,
+           createdAt:new Date().toISOString(), decidedAt:'', rejectReason:''};
+  if(t==='expense'){
+   d.payee=val('apExpPayee'); d.bank=val('apExpBank'); d.account=val('apExpAccount');
+   d.cat=val('apExpCat'); d.amount=Number(val('apExpAmount'))||0; d.payDate=val('apExpPayDate'); d.content=val('apExpContent');
+   d.execStatus='unexec'; d.matchedAt=''; d.matchedMemo='';
+   if(!d.payee||d.amount<=0) return alert('수취인과 금액을 확인하세요.');
+  }else if(t==='leave'){
+   d.staff=val('apLvStaff'); d.leaveStart=val('apLvStart'); d.leaveEnd=val('apLvEnd');
+   d.leaveDays=Number(val('apLvDays'))||0; d.content=val('apLvReason');
+   if(!d.staff||!d.leaveStart||!d.leaveEnd||d.leaveDays<=0) return alert('대상 직원과 기간/일수를 확인하세요.');
+  }else if(t==='disposal'){
+   d.title=val('apDsTitle'); d.amount=Number(val('apDsAmount'))||0; d.content=val('apDsContent');
+   if(!d.title) return alert('폐기 대상(제목)을 입력하세요.');
+  }else{
+   d.title=val('apGnTitle'); d.content=val('apGnContent');
+   if(!d.title) return alert('제목을 입력하세요.');
+  }
+  docs().push(d); saveAll();
+  window.approvalRenderNewForm();
+  window.renderApprovalView();
+  alert('결재 문서('+d.id+')가 올라갔습니다.\n결재자: '+approver+'\n\n⚠ 다른 컴퓨터의 결재자에게 보내려면 설정 탭에서 백업파일을 저장해 전달하세요.');
+ };
+
+ /* ---------- 문서 상세 모달 / 승인 / 반려 ---------- */
+ function ensureModal(){
+  let m=document.getElementById('approvalDocModal');
+  if(m) return m;
+  m=document.createElement('div');
+  m.id='approvalDocModal'; m.className='modal-backdrop';
+  m.innerHTML='<div class="modal" onclick="event.stopPropagation()" style="max-width:760px">'+
+   '<div class="modal-head"><h2 id="apDocModalTitle">결재 문서</h2><button class="modal-close" onclick="closeApprovalDoc()">닫기</button></div>'+
+   '<div class="modal-body" id="apDocModalBody"></div></div>';
+  m.addEventListener('click',()=>window.closeApprovalDoc());
+  document.body.appendChild(m);
+  return m;
+ }
+ window.closeApprovalDoc=function(){
+  const m=document.getElementById('approvalDocModal');
+  if(m) m.classList.remove('active');
+  try{ document.body.classList.remove('modal-open'); }catch(e){}
+ };
+ function docSheetHTML(d){
+  const rows=[];
+  const push=(k,v)=>rows.push('<tr><th>'+esc(k)+'</th><td>'+v+'</td></tr>');
+  push('문서번호', esc(d.id));
+  push('종류', esc(TYPE_LABEL[d.type]||d.type));
+  push('상태', statusBadge(d));
+  push('기안자', esc(d.drafter));
+  push('결재자', esc(d.approver));
+  push('기안일시', esc(String(d.createdAt||'').replace('T',' ').slice(0,16)));
+  if(d.decidedAt) push('처리일시', esc(String(d.decidedAt).replace('T',' ').slice(0,16)));
+  if(d.status==='rejected'&&d.rejectReason) push('반려 사유', esc(d.rejectReason));
+  if(d.type==='expense'){
+   push('수취인', esc(d.payee));
+   push('입금 계좌', esc((d.bank||'')+' '+(d.account||'')));
+   push('계정과목', esc(d.cat));
+   push('금액', '<b>'+fmt(d.amount)+'원</b>');
+   push('지급 요청일', esc(d.payDate||''));
+   push('내용', esc(d.content||''));
+   if(d.execStatus==='executed') push('집행', '집행완료 ('+esc(d.matchedAt||'')+') '+esc(d.matchedMemo||''));
+   else if(d.status==='approved') push('집행', '<span class="ap-status approved">미집행 — 비용 입력/은행 업로드와 매칭되면 자동으로 집행완료 처리</span>');
+  }else if(d.type==='leave'){
+   push('대상 직원', esc(d.staff));
+   push('기간', esc((d.leaveStart||'')+' ~ '+(d.leaveEnd||'')));
+   push('사용 일수', esc(d.leaveDays)+'일');
+   push('사유', esc(d.content||''));
+  }else if(d.type==='disposal'){
+   push('폐기 대상', esc(d.title));
+   push('폐기 금액', fmt(d.amount)+'원');
+   push('품목/수량/사유', esc(d.content||'').replace(/\n/g,'<br>'));
+  }else{
+   push('제목', esc(d.title));
+   push('내용', esc(d.content||'').replace(/\n/g,'<br>'));
+  }
+  return '<div class="ap-doc-sheet"><h2>'+esc(TYPE_LABEL[d.type]||'결재 문서')+'</h2><table class="ap-doc-table">'+rows.join('')+'</table></div>';
+ }
+ window.openApprovalDoc=function(id){
+  const d=docs().find(x=>x.id===id);
+  if(!d) return;
+  const me=currentUser();
+  const m=ensureModal();
+  document.getElementById('apDocModalTitle').textContent=d.id+' · '+(TYPE_LABEL[d.type]||'');
+  const btns=[];
+  if(d.status==='pending'&&me&&me===d.approver){
+   btns.push('<button onclick="approvalDecide(\''+esc(d.id)+'\',true)">✔ 승인</button>');
+   btns.push('<button class="secondary" onclick="approvalDecide(\''+esc(d.id)+'\',false)">✖ 반려</button>');
+  }else if(d.status==='pending'){
+   btns.push('<span class="small">승인/반려는 결재자('+esc(d.approver)+')가 "현재 사용자"로 선택된 상태에서만 가능합니다.</span>');
+  }
+  if(d.status==='approved'&&d.type==='expense'&&d.execStatus!=='executed'){
+   btns.push('<button class="secondary" onclick="approvalMarkExecuted(\''+esc(d.id)+'\')">집행완료로 수동 표시</button>');
+  }
+  if(d.status==='pending'&&me&&me===d.drafter){
+   btns.push('<button class="secondary" onclick="approvalDeleteDoc(\''+esc(d.id)+'\')">기안 취소(삭제)</button>');
+  }
+  btns.push('<button class="secondary" onclick="approvalPrintDoc(\''+esc(d.id)+'\')">🖨 인쇄</button>');
+  document.getElementById('apDocModalBody').innerHTML=docSheetHTML(d)+
+   '<div class="modal-actions" style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+btns.join('')+'</div>';
+  m.classList.add('active');
+  try{ document.body.classList.add('modal-open'); }catch(e){}
+ };
+ window.approvalDecide=function(id,ok){
+  const d=docs().find(x=>x.id===id);
+  if(!d||d.status!=='pending') return;
+  const me=currentUser();
+  if(me!==d.approver) return alert('결재자('+d.approver+') 본인만 처리할 수 있습니다.');
+  if(ok){
+   if(!confirm('문서 '+d.id+' 를 승인할까요?')) return;
+   d.status='approved';
+  }else{
+   const reason=prompt('반려 사유를 입력하세요.','');
+   if(reason===null) return;
+   d.status='rejected'; d.rejectReason=String(reason||'').trim();
+  }
+  d.decidedAt=new Date().toISOString();
+  saveAll();
+  window.closeApprovalDoc();
+  window.renderApprovalView();
+  toast('문서 '+d.id+' '+(ok?'승인':'반려')+' 처리 완료');
+ };
+ window.approvalMarkExecuted=function(id){
+  const d=docs().find(x=>x.id===id);
+  if(!d) return;
+  if(!confirm('이 지출결의서를 집행완료로 표시할까요?\n(비용 입력과 자동 매칭되지 않은 경우 수동 확인용)')) return;
+  d.execStatus='executed'; d.matchedAt=todayStr(); d.matchedMemo='수동 집행확인';
+  saveAll(); window.closeApprovalDoc(); window.renderApprovalView();
+ };
+ window.approvalDeleteDoc=function(id){
+  const d=docs().find(x=>x.id===id);
+  if(!d) return;
+  if(d.status!=='pending') return alert('처리 완료된 문서는 삭제할 수 없습니다.');
+  if(currentUser()!==d.drafter) return alert('기안자 본인만 취소할 수 있습니다.');
+  if(!confirm('기안을 취소(삭제)할까요?')) return;
+  state.approvalDocs=docs().filter(x=>x.id!==id);
+  saveAll(); window.closeApprovalDoc(); window.renderApprovalView();
+ };
+ window.approvalPrintDoc=function(id){
+  const d=docs().find(x=>x.id===id);
+  if(!d) return;
+  const w=window.open('','_blank');
+  if(!w) return alert('팝업이 차단되어 인쇄 창을 열 수 없습니다. 팝업 허용 후 다시 시도하세요.');
+  w.document.write('<html><head><title>'+esc(d.id)+'</title><style>'+
+   'body{font-family:"Pretendard","Malgun Gothic",sans-serif;padding:28px}'+
+   'h2{text-align:center}table{width:100%;border-collapse:collapse}'+
+   'th,td{border:1px solid #333;padding:8px 10px;font-size:13px;text-align:left}th{background:#f0f0f0;width:130px}'+
+   '.ap-status{font-weight:700}.sign{margin-top:36px;display:flex;justify-content:flex-end;gap:40px;font-size:13px}'+
+   '.sign div{text-align:center}.sign .box{width:90px;height:60px;border:1px solid #333;margin-top:6px}'+
+   '</style></head><body>'+docSheetHTML(d)+
+   '<div class="sign"><div>기안자<br>'+esc(d.drafter)+'<div class="box"></div></div><div>결재자<br>'+esc(d.approver)+'<div class="box"></div></div></div>'+
+   '</body></html>');
+  w.document.close();
+  setTimeout(()=>{ try{ w.print(); }catch(e){} },300);
+ };
+
+ /* ---------- 지출 자동 매칭 ---------- */
+ function unexecExpenseDocs(){
+  return docs().filter(d=>d.type==='expense'&&d.status==='approved'&&d.execStatus!=='executed');
+ }
+ /* 비용 레코드가 새로 등록될 때 호출 (addExpense / 은행검토 등록 / 비용파일 업로드) */
+ window.v630OnExpenseRecordAdded=function(rec, bankDesc){
+  if(!rec||!ensureApprovalState()) return;
+  const amount=Number(rec.amount)||0;
+  if(amount<=0) return;
+  const text=norm((rec.memo||'')+' '+(bankDesc||''));
+  const cands=unexecExpenseDocs().filter(d=>Number(d.amount)===amount);
+  if(!cands.length) return;
+  const byPayeeAndCat=cands.find(d=>d.cat===rec.cat && d.payee && text.includes(norm(d.payee)));
+  const byPayee=cands.find(d=>d.payee && text.includes(norm(d.payee)));
+  const byCat=cands.find(d=>d.cat===rec.cat);
+  const hit=byPayeeAndCat||byPayee||byCat;
+  if(!hit) return;
+  hit.execStatus='executed';
+  hit.matchedAt=rec.date||todayStr();
+  hit.matchedMemo=(rec.memo||bankDesc||'비용 등록 매칭');
+  rec.approvalId=hit.id;
+  toast('전자결재 '+hit.id+' ('+hit.payee+' '+fmt(hit.amount)+'원) 집행완료 매칭');
+ };
+ /* 은행 업로드 분류에서: 규칙 미매칭 거래를 승인·미집행 결의서와 대조 */
+ window.v630FindApprovalForBankTx=function(tx){
+  if(!tx||!ensureApprovalState()) return null;
+  const amount=Number(tx.amount)||0;
+  const desc=norm(tx.desc||'');
+  if(amount<=0||!desc) return null;
+  return unexecExpenseDocs().find(d=>Number(d.amount)===amount && d.payee && desc.includes(norm(d.payee)))||null;
+ };
+
+ /* ---------- 목록/요약 렌더 ---------- */
+ window.__apFilter=window.__apFilter||'all';
+ window.approvalSetFilter=function(f){ window.__apFilter=f; window.renderApprovalView(); };
+
+ function fillUserSelects(){
+  const list=users();
+  const me=currentUser();
+  const cur=document.getElementById('approvalCurrentUser');
+  if(cur){
+   cur.innerHTML='<option value="">(선택)</option>'+list.map(u=>'<option value="'+esc(u)+'"'+(u===me?' selected':'')+'>'+esc(u)+'</option>').join('');
+  }
+  const ap=document.getElementById('apNewApprover');
+  if(ap){
+   const prev=ap.value;
+   ap.innerHTML=list.map(u=>'<option value="'+esc(u)+'"'+(u===prev?' selected':'')+'>'+esc(u)+'</option>').join('')||'<option value="">직원 명단을 먼저 등록하세요</option>';
+  }
+ }
+ function renderUserTable(){
+  const box=document.getElementById('approvalUserTable');
+  const cnt=document.getElementById('apUserCount');
+  if(cnt) cnt.textContent=users().length+'명';
+  if(!box) return;
+  if(!users().length){ box.innerHTML='<div class="small">등록된 직원이 없습니다. 위에서 이름을 추가하세요.</div>'; return; }
+  box.innerHTML='<table class="compact-table"><tr><th>이름</th><th style="width:80px">삭제</th></tr>'+
+   users().map(u=>'<tr><td>'+esc(u)+'</td><td><button class="secondary" onclick="approvalRemoveUser(\''+esc(u)+'\')">삭제</button></td></tr>').join('')+'</table>';
+ }
+ function renderList(){
+  const table=document.getElementById('approvalListTable');
+  if(!table) return;
+  const me=currentUser();
+  const f=window.__apFilter;
+  let list=docs().slice().sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||'')));
+  if(f==='pending') list=list.filter(d=>d.status==='pending');
+  else if(f==='approved') list=list.filter(d=>d.status==='approved');
+  else if(f==='rejected') list=list.filter(d=>d.status==='rejected');
+  else if(f==='unexec') list=list.filter(d=>d.type==='expense'&&d.status==='approved'&&d.execStatus!=='executed');
+  document.querySelectorAll('#approval .ap-filter').forEach(b=>b.classList.toggle('active', b.dataset.f===f));
+  const head='<tr><th>문서번호</th><th>종류</th><th>제목</th><th>금액</th><th>기안자</th><th>결재자</th><th>기안일</th><th>상태</th></tr>';
+  if(!list.length){ table.innerHTML=head+'<tr><td colspan="8" class="small" style="text-align:center;padding:18px">해당하는 결재 문서가 없습니다.</td></tr>'; return; }
+  table.innerHTML=head+list.map(d=>{
+   const mine=d.status==='pending'&&me&&me===d.approver;
+   return '<tr onclick="openApprovalDoc(\''+esc(d.id)+'\')" style="cursor:pointer'+(mine?';background:#fffbea':'')+'">'+
+    '<td>'+esc(d.id)+(mine?' <span class="badge-warn">내 결재</span>':'')+'</td>'+
+    '<td>'+esc(TYPE_LABEL[d.type]||d.type)+'</td>'+
+    '<td>'+esc(docTitle(d))+'</td>'+
+    '<td style="text-align:right">'+(d.amount?fmt(d.amount)+'원':'-')+'</td>'+
+    '<td>'+esc(d.drafter)+'</td><td>'+esc(d.approver)+'</td>'+
+    '<td>'+esc(String(d.createdAt||'').slice(0,10))+'</td>'+
+    '<td>'+statusBadge(d)+'</td></tr>';
+  }).join('');
+ }
+ function renderSummary(){
+  const me=currentUser();
+  const all=docs();
+  const pending=all.filter(d=>d.status==='pending');
+  const mine=pending.filter(d=>me&&d.approver===me);
+  const unexec=all.filter(d=>d.type==='expense'&&d.status==='approved'&&d.execStatus!=='executed');
+  const unexecAmt=unexec.reduce((s,d)=>s+(Number(d.amount)||0),0);
+  const set=(id,v)=>{ const el=document.getElementById(id); if(el) el.textContent=v; };
+  set('apCardPending', pending.length+'건');
+  set('apCardMine', mine.length+'건');
+  set('apCardUnexec', unexec.length+'건');
+  set('apCardUnexecAmt', fmt(unexecAmt)+'원');
+  const badge=document.getElementById('apUnexecBadge');
+  if(badge){ badge.style.display=unexec.length?'':'none'; badge.textContent='미집행 '+unexec.length+'건 '+fmt(unexecAmt)+'원'; }
+  const tab=document.getElementById('approvalTabBadge');
+  if(tab){ const n=pending.length; tab.style.display=n?'':'none'; tab.textContent=n; }
+ }
+ window.renderApprovalView=function(){
+  if(!ensureApprovalState()) return;
+  fillUserSelects();
+  renderUserTable();
+  renderSummary();
+  renderList();
+  const area=document.getElementById('apNewFormArea');
+  if(area&&!area.innerHTML) window.approvalRenderNewForm();
+ };
+
+ /* 부팅 시 상태 보정 + 탭 배지 1회 갱신 (탭을 열지 않아도 대기 건수 표시) */
+ document.addEventListener('DOMContentLoaded', function(){
+  try{ ensureApprovalState(); renderSummary(); }catch(e){ console.warn('전자결재 부팅 보정 실패',e); }
+ });
 })();
 </script>
 
